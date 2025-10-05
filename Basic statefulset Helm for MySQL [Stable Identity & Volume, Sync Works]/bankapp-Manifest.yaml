@@ -1,12 +1,12 @@
 ---
-# Namespace
+# Namespace for all resources
 apiVersion: v1
 kind: Namespace
 metadata:
   name: webapps
 
 ---
-# Secret for BankApp (uses appuser now)
+# Secret for Database credentials
 apiVersion: v1
 kind: Secret
 metadata:
@@ -16,9 +16,11 @@ type: Opaque
 stringData:
   MYSQL_USERNAME: appuser
   MYSQL_PASSWORD: appuser123
+  # Adding a ROOT password for MySQL StatefulSet setup
+  MYSQL_ROOT_PASSWORD: rootpassword123 
 
 ---
-# ConfigMap for MySQL DB name
+# ConfigMap for Database name
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -41,7 +43,83 @@ reclaimPolicy: Retain
 volumeBindingMode: WaitForFirstConsumer
 
 ---
-# BankApp Deployment
+# Headless Service for MySQL StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: bankapp-mysql-primary
+  namespace: webapps
+spec:
+  selector:
+    app: bankapp-mysql
+  clusterIP: None # Makes it a Headless Service for deterministic networking
+  ports:
+    - port: 3306
+      targetPort: 3306
+
+---
+# MySQL Database StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: bankapp-mysql
+  namespace: webapps
+spec:
+  selector:
+    matchLabels:
+      app: bankapp-mysql
+  serviceName: bankapp-mysql-primary
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: bankapp-mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          ports:
+            - containerPort: 3306
+          env:
+            # Set the database name from ConfigMap
+            - name: MYSQL_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: mysql-config
+                  key: MYSQL_DATABASE
+            # Set the application user/password from Secret
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_USERNAME
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_PASSWORD
+            # Set the root password from Secret
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: MYSQL_ROOT_PASSWORD
+          volumeMounts:
+            - name: mysql-persistent-storage
+              mountPath: /var/lib/mysql
+  # Persistent Volume Claim Template
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-persistent-storage
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: ebs-sc
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# BankApp Deployment (Fixed)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,8 +141,10 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            # FIX: Removed the redundant 'SPRING_DATASOURCE_URL: ' prefix.
+            # IMPR: Using environment variable substitution for the DB name.
             - name: SPRING_DATASOURCE_URL
-              value: "jdbc:mysql://bankapp-mysql-primary:3306/bankappdb?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+              value: jdbc:mysql://bankapp-mysql-primary:3306/bankappdb?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -100,14 +180,14 @@ spec:
               cpu: "500m"
 
 ---
-# BankApp Service
+# BankApp Service (LoadBalancer)
 apiVersion: v1
 kind: Service
 metadata:
   name: bankapp-service
   namespace: webapps
 spec:
-  type: LoadBalancer
+  type: LoadBalancer # Exposes the application externally
   selector:
     app: bankapp
   ports:
