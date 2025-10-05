@@ -6,7 +6,7 @@ metadata:
   name: webapps
 
 ---
-# Secret for BankApp (uses appuser now)
+# Secret for BankApp (uses appuser)
 apiVersion: v1
 kind: Secret
 metadata:
@@ -63,12 +63,9 @@ spec:
           ports:
             - containerPort: 8080
           env:
-           
-          env:
-            - name: SPRING_DATASOURCE_URL
-              value: jdbc:mysql://bankapp-mysql-primary:3306/bankappdb?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-            - name: SPRING_DATASOURCE_USERNAME
-
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:mysql://bankapp-mysql-primary:3306/bankappdb?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+            - name: SPRING_DATASOURCE_USERNAME
               valueFrom:
                 secretKeyRef:
                   name: mysql-secret
